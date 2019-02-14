@@ -37,6 +37,7 @@ module Fluent
       def configure(conf)
         super
 
+
         ## Check if "output_format" has a valid value
         unless  @output_format.to_s == "structured" ||
                 @output_format.to_s == "flat" ||
@@ -59,13 +60,19 @@ module Fluent
         device_name = jti_msg.system_id
         yield_time = epoc_to_sec(jti_msg.timestamp)
         gpb_time = epoc_to_ms(jti_msg.timestamp)
+        $log.debug jti_msg.timestamp
+        $log.debug yield_time
+        $log.debug gpb_time
         measurement_prefix = "enterprise.juniperNetworks"
 
         ## Extract sensor
         begin
           jnpr_sensor = jti_msg.enterprise.juniperNetworks
           datas_sensors = JSON.parse(jnpr_sensor.to_json)
+          $log.debug  "Extract sensor data from #{device_name} with output #{output_format}"
         rescue => e
+          $log.warn   "Unable to extract sensor data sensor from jti_msg.enterprise.juniperNetworks, Error during processing: #{$!}"
+          $log.debug  "Unable to extract sensor data sensor from jti_msg.enterprise.juniperNetworks, Data Dump : " + jti_msg.inspect.to_s
           return
         end
 
@@ -91,6 +98,7 @@ module Fluent
         end
 
         for data in final_data
+            $log.debug data
             yield yield_time, data
         end
 
@@ -99,4 +107,3 @@ module Fluent
     end
   end
 end
-
