@@ -21,15 +21,22 @@ require 'npu_memory_utilization.pb.rb'
 require 'port_exp.pb.rb'
 require 'packet_stats.pb.rb'
 require 'optics.pb.rb'
-require 'port.pb.rb'
+require 'ipsec_telemetry.pb.rb'
+require 'session_telemetry.pb.rb'
+require 'sr_stats_per_if_egress.pb.rb'
+require 'sr_stats_per_if_ingress.pb.rb'
+require 'sr_stats_per_sid.pb.rb'
+require 'svcset_telemetry.pb.rb'
 require 'socket'
 require 'json'
+require 'google/protobuf/descriptor.pb'
+
 
 module Fluent
-  class TextParser
-    class JuniperJtiParser < Parser
+  module Plugin
+    class JuniperUdpNativeParser < Parser
 
-      Plugin.register_parser("juniper_udp_native", self)
+      Fluent:: Plugin.register_parser("juniper_udp_native", self)
 
       config_param :output_format, :string, :default => 'structured'
 
@@ -49,6 +56,29 @@ module Fluent
       def parse(text)
 
         host = Socket.gethostname
+        supported_sensor_list = [
+          "jnpr_cmerror_data_ext", 
+          "jnpr_cmerror_ext", 
+          "jnpr_firewall_ext", 
+          "jnpr_lsp_statistics_ext", 
+          "jnpr_npu_utilization_ext", 
+          "jnpr_optics_ext", 
+          "jnpr_packet_statistics_ext", 
+          "jnpr_interface_exp_ext", 
+          "jnpr_interface_ext", 
+          "jnpr_qmon_ext",
+          "jnprLogicalInterfaceExt",
+          "cpu_memory_util_ext",
+          "fabricMessageExt",
+          "inline_jflow_stats_ext",
+          "npu_memory_ext",
+          "jnpr_sr_stats_per_if_egress_ext",
+          "jnpr_sr_stats_per_if_ingress_ext",
+          "jnpr_sr_stats_per_sid_ext",
+          "jnprScvsSessionExt",
+          "jnprScvsInfraExt",
+          "jnprIPsecVPNExt"
+        ]
 
         ## Decode GBP packet
         jti_msg =  TelemetryStream.decode(text)
@@ -59,8 +89,6 @@ module Fluent
         device_name = jti_msg.system_id
         yield_time = epoc_to_sec(jti_msg.timestamp)
         gpb_time = epoc_to_ms(jti_msg.timestamp)
-        $log.debug jti_msg.timestamp
-        $log.debug yield_time
         $log.debug gpb_time
         measurement_prefix = "enterprise.juniperNetworks"
 
@@ -75,36 +103,37 @@ module Fluent
           return
         end
 
-        $log.debug "=============================================================="
-        $log.debug "TEXT: #{text}"
-        $log.debug "JTI_MSG: #{jti_msg}"
-        $log.debug "JNPR_SENSOR: #{jnpr_sensor}"
-        $log.debug "INSPECT : " + jnpr_sensor.inspect
-        $log.debug datas_sensors
-        $log.debug "=============================================================="
-
         ## Go over each Sensor
         final_data = Array.new
-        datas_sensors.each do |sensor, s_data|
-            if s_data.is_a? Hash
-                final_data = parse_hash(s_data, jnpr_sensor)
-                if final_data[0].is_a? Hash
-                    final_data = final_data
-                else
-                    final_data = final_data[0]
-                end
+        supported_sensor_list.each do |sensor|
+            if jnpr_sensor.send(sensor).nil?
+                next
             end
-        end
+            final_data = parse_each_field(jnpr_sensor.send(sensor))
+            if final_data[0].is_a? Hash
+                final_data = final_data
+            else
+                final_data = final_data[0]
+            end
 
-        
+        end
+        seq = 0 
         for data in final_data
             data['device'] = device_name
             data['host'] = host
             data['sensor_name'] = datas_sensors.keys[0]
             data['time'] = gpb_time
+            if not data.key?('key_fields')
+                data['key_fields'] = {'_seq': seq}
+                seq += 1
+            elsif data['key_fields'].empty?
+                data['key_fields'] = {'_seq': seq}
+                seq += 1
+            end
         end
 
         for data in final_data
+	    $log.debug data
             yield yield_time, data
         end
 
@@ -113,3 +142,4 @@ module Fluent
     end
   end
 end
+
